@@ -1,10 +1,7 @@
 #![allow(dead_code)]
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
-    collections::HashMap,
-    fs::File,
-    io::{BufReader, Read, Seek},
-    path::Path,
+    collections::HashMap, fs::File, io::{BufReader, Read, Seek}, path::Path
 };
 use thiserror::Error;
 
@@ -32,6 +29,9 @@ pub enum GGUFError {
 
     #[error("{what} length {len} is too large for this machine")]
     TooLarge { what: &'static str, len: u64 },
+
+    #[error("tensor not found")]
+    TensorNotFound,
 }
 
 #[derive(Debug, Clone)]

@@ -1,9 +1,11 @@
 mod gguf;
+mod tensor;
 
 use gguf::{GGUFFile, ggml_type_name};
+use tensor::WeightStore;
 
 fn main() {
-    let path = "../model/qwen-3.5.gguf";
+    let path = "../model/qwen.gguf";
 
     println!("ferrite v0.1.0 - loading {path}\n");
 
@@ -84,4 +86,26 @@ fn main() {
             }
             None => println!("  tensor '{demo_tensor}' not found"),
         }
+
+        let store = WeightStore::open("../model/qwen.gguf").unwrap();
+        
+        // T3 checkpoint — F32 tensor, should be small floats near 1.0
+        let norm = store.load("blk.0.attn_norm.weight").unwrap();
+        print!("attn_norm.weight (F32) first 8: ");
+        norm.data().iter().take(8).for_each(|x| print!("{:.6} ", x));
+        println!();
+        
+        // T4 checkpoint — Q8_0 tensor
+        let ssm = store.load("blk.0.ssm_out.weight").unwrap();
+        print!("ssm_out.weight (Q8_0) first 8: ");
+        ssm.data().iter().take(8).for_each(|x| print!("{:.6} ", x));
+        println!();
+        
+        // T4 checkpoint — Q6_K tensor (the big one)
+        let embd = store.load("token_embd.weight").unwrap();
+        print!("token_embd.weight (Q6_K) first 8: ");
+        embd.data().iter().take(8).for_each(|x| print!("{:.6} ", x));
+        println!();
+        
+        println!("Layer 2 complete.");
 }
