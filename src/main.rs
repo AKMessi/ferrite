@@ -1,8 +1,10 @@
 mod gguf;
 mod tensor;
+mod tokenizer;
 
 use gguf::{GGUFFile, ggml_type_name};
 use tensor::WeightStore;
+use tokenizer::Tokenizer;
 
 fn main() {
     let path = "../model/qwen.gguf";
@@ -108,4 +110,9 @@ fn main() {
         println!();
         
         println!("Layer 2 complete.");
+
+        let tokenizer = Tokenizer::from_gguf(&store.gguf);
+        let ids = tokenizer.encode("Hello, world!");
+        println!("encoded: {:?}", ids);
+        println!("decoded: {}", tokenizer.decode(&ids));
 }
