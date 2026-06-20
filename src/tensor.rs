@@ -494,6 +494,30 @@ impl Tensor {
         }
     }
 
+    pub fn sigmoid(&self) -> Tensor {
+        let new_data = self
+            .data
+            .iter()
+            .map(|&x| 1.0 / (1.0 + (-x).exp()))
+            .collect();
+        Self {
+            data: new_data,
+            shape: self.shape.clone(),
+        }
+    }
+
+    pub fn softplus(&self) -> Tensor {
+        let new_data = self
+            .data
+            .iter()
+            .map(|&x| if x > 20.0 { x } else { (1.0 + x.exp()).ln() })
+            .collect();
+        Self {
+            data: new_data,
+            shape: self.shape.clone(),
+        }
+    }
+
     pub unsafe fn load_f32(bytes: &[u8], shape: Vec<usize>) -> Tensor {
         let ptr = bytes.as_ptr();
         assert_eq!(
@@ -533,6 +557,26 @@ impl Tensor {
     }
     pub fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    pub fn matvec(&self, x: &Tensor) -> Tensor {
+        assert_eq!(self.rank(), 2, "matvec requires a rank-2 weight matrix");
+        assert_eq!(x.rank(), 1, "matvec requires a rank-1 input vector");
+        assert_eq!(self.shape()[1], x.shape()[0], "matvec dimension mismatch");
+
+        let out_dim = self.shape()[0];
+        let in_dim = self.shape()[1];
+        let mut out = vec![0.0f32; out_dim];
+
+        for i in 0..out_dim {
+            let mut sum = 0.0;
+            for j in 0..in_dim {
+                sum += self[(i, j)] * x.data()[j];
+            }
+            out[i] = sum;
+        }
+
+        Tensor::from_vec(out, vec![out_dim])
     }
 }
 

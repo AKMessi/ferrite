@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
-    collections::HashMap, fs::File, io::{BufReader, Read, Seek}, path::Path
+    collections::HashMap,
+    fs::File,
+    io::{BufReader, Read, Seek},
+    path::Path,
 };
 use thiserror::Error;
 
@@ -68,6 +71,13 @@ impl MetadataValue {
         match self {
             MetadataValue::U64(v) => Some(*v),
             MetadataValue::U32(v) => Some(*v as u64),
+            _ => None,
+        }
+    }
+
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            MetadataValue::F32(v) => Some(*v),
             _ => None,
         }
     }

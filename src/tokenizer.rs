@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use crate::gguf::{GGUFFile, MetadataValue};
 
@@ -14,7 +14,8 @@ impl Tokenizer {
         let mut token_to_id = HashMap::with_capacity(248_320);
         let mut merges = HashMap::new();
 
-        if let Some(MetadataValue::Array(tokens_array)) = gguf.metadata.get("tokenizer.ggml.tokens") {
+        if let Some(MetadataValue::Array(tokens_array)) = gguf.metadata.get("tokenizer.ggml.tokens")
+        {
             for (id, item) in tokens_array.iter().enumerate() {
                 if let MetadataValue::Str(token) = item {
                     vocab.push(token.clone());
@@ -23,7 +24,8 @@ impl Tokenizer {
             }
         }
 
-        if let Some(MetadataValue::Array(merges_array)) = gguf.metadata.get("tokenizer.ggml.merges") {
+        if let Some(MetadataValue::Array(merges_array)) = gguf.metadata.get("tokenizer.ggml.merges")
+        {
             for (priority, item) in merges_array.iter().enumerate() {
                 if let MetadataValue::Str(merge_str) = item {
                     let mut parts = merge_str.splitn(2, ' ');
@@ -35,7 +37,11 @@ impl Tokenizer {
             }
         }
 
-        Tokenizer { vocab, token_to_id, merges }
+        Tokenizer {
+            vocab,
+            token_to_id,
+            merges,
+        }
     }
 
     pub fn encode(&self, text: &str) -> Vec<u32> {
@@ -46,12 +52,14 @@ impl Tokenizer {
         // pre-tokenize: convert spaces to Ġ prefix on following word
         let pre = text.replace(' ', "Ġ");
 
-        let mut tokens: Vec<u32> = pre.chars()
+        let mut tokens: Vec<u32> = pre
+            .chars()
             .map(|c| {
                 let s = c.to_string();
-                self.token_to_id.get(&s).copied().unwrap_or_else(|| {
-                    *self.token_to_id.get(&format!("{}", c)).unwrap_or(&0)
-                })
+                self.token_to_id
+                    .get(&s)
+                    .copied()
+                    .unwrap_or_else(|| *self.token_to_id.get(&format!("{}", c)).unwrap_or(&0))
             })
             .collect();
 
@@ -61,7 +69,7 @@ impl Tokenizer {
             let mut best_idx = None;
 
             for i in 0..tokens.len().saturating_sub(1) {
-                let left  = &self.vocab[tokens[i]     as usize];
+                let left = &self.vocab[tokens[i] as usize];
                 let right = &self.vocab[tokens[i + 1] as usize];
                 let key = (left.clone(), right.clone());
                 if let Some(&p) = self.merges.get(&key) {
@@ -75,7 +83,7 @@ impl Tokenizer {
             match best_idx {
                 None => break,
                 Some(i) => {
-                    let left  = &self.vocab[tokens[i]     as usize];
+                    let left = &self.vocab[tokens[i] as usize];
                     let right = &self.vocab[tokens[i + 1] as usize];
                     let merged = format!("{}{}", left, right);
                     match self.token_to_id.get(&merged) {
@@ -113,23 +121,37 @@ mod tests {
     fn test_encode_decode_roundtrip() {
         // minimal fake vocab + merges to test the logic without a real GGUF
         let vocab = vec![
-            "h".to_string(), "e".to_string(), "l".to_string(),
-            "o".to_string(), "he".to_string(), "hel".to_string(), "hell".to_string(), "hello".to_string(),
+            "h".to_string(),
+            "e".to_string(),
+            "l".to_string(),
+            "o".to_string(),
+            "he".to_string(),
+            "hel".to_string(),
+            "hell".to_string(),
+            "hello".to_string(),
         ];
         let mut token_to_id = HashMap::new();
         for (i, t) in vocab.iter().enumerate() {
             token_to_id.insert(t.clone(), i as u32);
         }
         let mut merges = HashMap::new();
-        merges.insert(("h".to_string(),   "e".to_string()),   0u32);
-        merges.insert(("he".to_string(),  "l".to_string()),   1u32);
-        merges.insert(("hel".to_string(), "l".to_string()),   2u32);
-        merges.insert(("hell".to_string(),"o".to_string()),   3u32);
+        merges.insert(("h".to_string(), "e".to_string()), 0u32);
+        merges.insert(("he".to_string(), "l".to_string()), 1u32);
+        merges.insert(("hel".to_string(), "l".to_string()), 2u32);
+        merges.insert(("hell".to_string(), "o".to_string()), 3u32);
 
-        let tokenizer = Tokenizer { vocab, token_to_id, merges };
+        let tokenizer = Tokenizer {
+            vocab,
+            token_to_id,
+            merges,
+        };
 
         let ids = tokenizer.encode("hello");
-        assert_eq!(ids, vec![7u32], "expected 'hello' to encode to a single token [7]");
+        assert_eq!(
+            ids,
+            vec![7u32],
+            "expected 'hello' to encode to a single token [7]"
+        );
 
         let decoded = tokenizer.decode(&ids);
         assert_eq!(decoded, "hello");
@@ -151,7 +173,11 @@ mod tests {
         let vocab = vec!["Ġworld".to_string()];
         let mut token_to_id = HashMap::new();
         token_to_id.insert("Ġworld".to_string(), 0u32);
-        let tokenizer = Tokenizer { vocab, token_to_id, merges: HashMap::new() };
+        let tokenizer = Tokenizer {
+            vocab,
+            token_to_id,
+            merges: HashMap::new(),
+        };
 
         let decoded = tokenizer.decode(&[0]);
         assert_eq!(decoded, " world"); // Ġ replaced with space
