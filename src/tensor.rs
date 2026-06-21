@@ -559,6 +559,8 @@ impl Tensor {
         &self.shape
     }
 
+    pub fn data_mut(&mut self) -> &mut [f32] { &mut self.data }
+
     pub fn matvec(&self, x: &Tensor) -> Tensor {
         assert_eq!(self.rank(), 2, "matvec requires a rank-2 weight matrix");
         assert_eq!(x.rank(), 1, "matvec requires a rank-1 input vector");

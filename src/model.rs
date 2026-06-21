@@ -1,14 +1,17 @@
+use crate::cache::KVCache;
+#[allow(dead_code)]
+
 use crate::{
     gguf::{GGUFFile, MetadataValue},
     tensor::{Tensor, WeightStore},
 };
 
 pub struct ModelConfig {
-    n_layers: usize,
+    pub n_layers: usize,
     embed_dim: usize,
     n_heads: usize,
-    n_kv_heads: usize,
-    head_dim: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
     ffn_dim: usize,
     vocab_size: usize,
     context_len: usize,
@@ -20,7 +23,7 @@ pub struct ModelConfig {
 }
 
 pub struct Model {
-    config: ModelConfig,
+    pub config: ModelConfig,
     weights: WeightStore,
 }
 
@@ -179,7 +182,7 @@ impl Model {
         Tensor::from_vec(row_data, vec![embed_dim])
     }
 
-    pub fn forward(&self, tokens: &[u32], pos: usize) -> Tensor {
+    pub fn forward(&self, tokens: &[u32], pos: usize, cache: &mut KVCache) -> Tensor {
         // 1. embed the current token (you have self.embed() already)
         let mut x = self.embed(tokens[pos]);
 
@@ -187,7 +190,7 @@ impl Model {
         for layer in 0..self.config.n_layers {
             let is_attention = (layer + 1) % 4 == 0;
             x = if is_attention {
-                transformer_block(&x, layer, pos, self)
+                transformer_block(&x, layer, pos, self, cache)
             } else {
                 let ssm_out = ssm_block(&x, layer, self);
                 x.add(&ssm_out)
@@ -206,7 +209,7 @@ impl Model {
     }
 }
 
-pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model) -> Tensor {
+pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model, cache: &mut KVCache) -> Tensor {
     let cfg = &model.config;
     let head_dim = model.config.head_dim;
     let n_heads = model.config.n_heads;
@@ -229,9 +232,9 @@ pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model) -> Tensor 
         .load(&format!("blk.{}.attn_output.weight", layer))
         .unwrap();
 
-    let q_proj_out = q_w.matvec(x); // [4096]
-    let k_proj_out = k_w.matvec(x); // [512]
-    let v_proj_out = v_w.matvec(x); // [512]
+    let q_proj_out = q_w.matvec(x);
+    let k_proj_out = k_w.matvec(x);
+    let v_proj_out = v_w.matvec(x);
 
     let q_data = q_proj_out.data();
     let q_raw_vec: Vec<f32> = q_data[0..2048].to_vec();
@@ -291,26 +294,49 @@ pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model) -> Tensor 
 
     let (q_rot, k_rot) = rope(&q_stacked, &k_stacked, pos, cfg);
 
-    // 3. For each query head, do scaled dot-product attention against its grouped KV head
+    let mut v_stacked_data = Vec::new();
+    for vh in &v_heads {
+        v_stacked_data.extend_from_slice(vh.data())
+    }
+    let v_stacked = Tensor::from_vec(v_stacked_data, vec![n_kv_heads, head_dim]);
+
+    cache.update(&model.config, layer, pos, &k_rot, &v_stacked);
+
+    let all_keys = cache.get_keys_up_to(layer, pos + 1, &model.config);
+    let all_values = cache.get_values_up_to(layer, pos + 1, &model.config);
+
     let group_size = n_heads / n_kv_heads;
     let mut head_outputs: Vec<Tensor> = Vec::new();
-
+    
     for h in 0..n_heads {
         let kv_h = h / group_size;
-
-        // extract this head's rotated q [head_dim] and the corresponding k [head_dim]
         let q_h: Vec<f32> = (0..head_dim).map(|d| q_rot[(h, d)]).collect();
-        let k_h: Vec<f32> = (0..head_dim).map(|d| k_rot[(kv_h, d)]).collect();
-        let v_h = &v_heads[kv_h];
 
-        // single-token dot product score (no real softmax needed over 1 value, but keep the scale)
-        let _score: f32 =
-            q_h.iter().zip(k_h.iter()).map(|(a, b)| a * b).sum::<f32>() / (head_dim as f32).sqrt();
-        // softmax over a single score is just 1.0 — weighted sum of values is just v_h itself
-        // this only becomes meaningful once KV cache (Layer 5) lets you attend over multiple positions
+        // step 1
+        let mut scores = vec![0.0f32; pos + 1];
+        for t in 0..=pos {
+            let mut dot = 0.0;
+            for d in 0..head_dim {
+                let flat_idx = t * (n_kv_heads * head_dim) + kv_h * head_dim + d;
+                dot += q_h[d] * all_keys.data()[flat_idx];
+            }
+            scores[t] = dot / (head_dim as f32).sqrt();
+        }
+        // step 2
+        let scores_tensor = Tensor::from_vec(scores, vec![pos + 1]);
+        let weights = scores_tensor.softmax();
 
-        head_outputs.push(v_h.clone()); // placeholder until KV cache exists
-    }
+        // step 3
+        let mut out_h = vec![0.0f32; head_dim];
+        for t in 0..=pos {
+            let w = weights.data()[t];
+            for d in 0..head_dim {
+                let flat_idx = t * (n_kv_heads * head_dim) + kv_h * head_dim + d;
+                out_h[d] += w * all_values.data()[flat_idx];
+                }
+            }
+        head_outputs.push(Tensor::from_vec(out_h, vec![head_dim]));
+        }
 
     // 4. Concatenate head outputs -> [n_heads * head_dim] = [2048]
     let mut concat_data = Vec::new();
@@ -358,13 +384,13 @@ fn ffn(x: &Tensor, layer: usize, model: &Model) -> Tensor {
     down_out
 }
 
-pub fn transformer_block(x: &Tensor, layer: usize, pos: usize, model: &Model) -> Tensor {
+pub fn transformer_block(x: &Tensor, layer: usize, pos: usize, model: &Model, cache: &mut KVCache) -> Tensor {
     let norm1_w = model
         .weights
         .load(&format!("blk.{}.attn_norm.weight", layer))
         .unwrap();
     let normed = x.rms_norm(&norm1_w, model.config.rms_eps);
-    let attn_out = attention(&normed, layer, pos, model);
+    let attn_out = attention(&normed, layer, pos, model, cache);
     let x2 = x.add(&attn_out);
 
     let norm2_w = model
