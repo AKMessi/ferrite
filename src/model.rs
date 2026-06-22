@@ -1,7 +1,7 @@
-use crate::cache::KVCache;
 #[allow(dead_code)]
-
+use crate::cache::KVCache;
 use crate::{
+    cache::SSMState,
     gguf::{GGUFFile, MetadataValue},
     tensor::{Tensor, WeightStore},
 };
@@ -18,8 +18,8 @@ pub struct ModelConfig {
     rope_theta: f32,
     rms_eps: f32,
     rope_dim: usize,
-    ssm_group_count: usize,
-    ssm_state_size: usize,
+    pub ssm_group_count: usize,
+    pub ssm_state_size: usize,
 }
 
 pub struct Model {
@@ -182,7 +182,13 @@ impl Model {
         Tensor::from_vec(row_data, vec![embed_dim])
     }
 
-    pub fn forward(&self, tokens: &[u32], pos: usize, cache: &mut KVCache) -> Tensor {
+    pub fn forward(
+        &self,
+        tokens: &[u32],
+        pos: usize,
+        cache: &mut KVCache,
+        ssm_state: &mut SSMState,
+    ) -> Tensor {
         // 1. embed the current token (you have self.embed() already)
         let mut x = self.embed(tokens[pos]);
 
@@ -192,7 +198,7 @@ impl Model {
             x = if is_attention {
                 transformer_block(&x, layer, pos, self, cache)
             } else {
-                let ssm_out = ssm_block(&x, layer, self);
+                let ssm_out = ssm_block(&x, layer, self, ssm_state);
                 x.add(&ssm_out)
             };
         }
@@ -209,7 +215,13 @@ impl Model {
     }
 }
 
-pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model, cache: &mut KVCache) -> Tensor {
+pub fn attention(
+    x: &Tensor,
+    layer: usize,
+    pos: usize,
+    model: &Model,
+    cache: &mut KVCache,
+) -> Tensor {
     let cfg = &model.config;
     let head_dim = model.config.head_dim;
     let n_heads = model.config.n_heads;
@@ -307,7 +319,7 @@ pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model, cache: &mu
 
     let group_size = n_heads / n_kv_heads;
     let mut head_outputs: Vec<Tensor> = Vec::new();
-    
+
     for h in 0..n_heads {
         let kv_h = h / group_size;
         let q_h: Vec<f32> = (0..head_dim).map(|d| q_rot[(h, d)]).collect();
@@ -333,10 +345,10 @@ pub fn attention(x: &Tensor, layer: usize, pos: usize, model: &Model, cache: &mu
             for d in 0..head_dim {
                 let flat_idx = t * (n_kv_heads * head_dim) + kv_h * head_dim + d;
                 out_h[d] += w * all_values.data()[flat_idx];
-                }
             }
-        head_outputs.push(Tensor::from_vec(out_h, vec![head_dim]));
         }
+        head_outputs.push(Tensor::from_vec(out_h, vec![head_dim]));
+    }
 
     // 4. Concatenate head outputs -> [n_heads * head_dim] = [2048]
     let mut concat_data = Vec::new();
@@ -384,7 +396,13 @@ fn ffn(x: &Tensor, layer: usize, model: &Model) -> Tensor {
     down_out
 }
 
-pub fn transformer_block(x: &Tensor, layer: usize, pos: usize, model: &Model, cache: &mut KVCache) -> Tensor {
+pub fn transformer_block(
+    x: &Tensor,
+    layer: usize,
+    pos: usize,
+    model: &Model,
+    cache: &mut KVCache,
+) -> Tensor {
     let norm1_w = model
         .weights
         .load(&format!("blk.{}.attn_norm.weight", layer))
@@ -404,7 +422,7 @@ pub fn transformer_block(x: &Tensor, layer: usize, pos: usize, model: &Model, ca
     x3
 }
 
-pub fn ssm_block(x: &Tensor, layer: usize, model: &Model) -> Tensor {
+pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMState) -> Tensor {
     let qkv_w = model
         .weights
         .load(&format!("blk.{}.attn_qkv.weight", layer))
@@ -482,37 +500,38 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model) -> Tensor {
     );
     let _g = exp_a.mul(&softplus_part).scale(-1.0);
 
-    let mut output_data = vec![0.0f32; 2048];
+    let mut output_data = vec![0.0f32; ssm_group_count * ssm_state_size];
 
-    // PLACEHOLDER: assumes zero initial state (correct only for the first token
-    // in a sequence). Real implementation needs persistent state carried across
-    // forward() calls — revisit in Layer 5 alongside the KV cache.
     for grp in 0..ssm_group_count {
         let start = grp * ssm_state_size;
         let end = start + ssm_state_size;
 
-        let q_g = &query.data()[start..end];
-        let k_g = &key.data()[start..end];
-        let v_g = &value.data()[start..end];
+        let q_g = Tensor::from_vec(query.data()[start..end].to_vec(), vec![ssm_state_size]);
+        let k_g = Tensor::from_vec(key.data()[start..end].to_vec(), vec![ssm_state_size]);
+        let v_g = Tensor::from_vec(value.data()[start..end].to_vec(), vec![ssm_state_size]);
         let beta_g = beta.data()[grp];
+        let g_g = _g.data()[grp];
 
-        // key·query dot product (scalar, since state_0 = 0 collapses the recurrence)
-        let kq_dot: f32 = k_g.iter().zip(q_g.iter()).map(|(a, b)| a * b).sum();
+        let mut state = ssm_state.get_group_state(layer, grp, &model.config);
+        let decay = g_g.exp();
+        state = state.scale(decay);
 
-        if grp == 0 {
-            println!(
-                "  [ssm_block layer {}] kq_dot={:.6}, beta_g={:.6}",
-                layer, kq_dot, beta_g
-            );
-        }
+        let predicted = state.matvec(&k_g);
 
-        // output for this group = beta * value * (key · query)
-        for i in 0..ssm_state_size {
-            output_data[start + i] = beta_g * v_g[i] * kq_dot;
-        }
+        let delta = v_g.sub(&predicted);
+
+        let correction = delta.outer(&k_g).scale(beta_g);
+
+        state = state.add(&correction);
+
+        ssm_state.set_group_state(layer, grp, &state, &model.config);
+
+        let out_g = state.matvec(&q_g);
+
+        output_data[start..end].copy_from_slice(out_g.data());
     }
 
-    let output = Tensor::from_vec(output_data, vec![2048]);
+    let output = Tensor::from_vec(output_data, vec![ssm_group_count * ssm_state_size]);
 
     let mut normed_data = vec![0.0f32; ssm_group_count * ssm_state_size];
     for grp in 0..ssm_group_count {

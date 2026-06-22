@@ -301,6 +301,38 @@ impl Tensor {
         Self { data, shape }
     }
 
+    pub fn sub(&self, other: &Tensor) -> Tensor {
+        assert_eq!(self.shape, other.shape, "shape mismatch for subtraction");
+        let new_data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .map(|(a, b)| a - b)
+            .collect();
+        Self {
+            data: new_data,
+            shape: self.shape.clone(),
+        }
+    }
+
+    pub fn outer(&self, other: &Tensor) -> Tensor {
+        assert_eq!(self.rank(), 1, "outer requires rank-1 self");
+        assert_eq!(other.rank(), 1, "outer requires rank-1 other");
+
+        let n = self.shape()[0];
+        let m = other.shape()[0];
+
+        let mut out = Tensor::zeros(vec![n, m]);
+
+        for i in 0..n {
+            for j in 0..m {
+                out[(i, j)] = self.data()[i] * other.data()[j];
+            }
+        }
+
+        out
+    }
+
     pub fn from_vec(data: Vec<f32>, shape: Vec<usize>) -> Self {
         let numel: usize = shape.iter().product();
 
@@ -559,7 +591,9 @@ impl Tensor {
         &self.shape
     }
 
-    pub fn data_mut(&mut self) -> &mut [f32] { &mut self.data }
+    pub fn data_mut(&mut self) -> &mut [f32] {
+        &mut self.data
+    }
 
     pub fn matvec(&self, x: &Tensor) -> Tensor {
         assert_eq!(self.rank(), 2, "matvec requires a rank-2 weight matrix");
@@ -690,4 +724,14 @@ fn test_tensor_matmul() {
             diff
         );
     }
+}
+
+#[test]
+fn test_outer() {
+    let a = Tensor::from_vec(vec![1.0, 2.0], vec![2]);
+    let b = Tensor::from_vec(vec![3.0, 4.0, 5.0], vec![3]);
+    let result = a.outer(&b);
+    assert_eq!(result.shape(), &[2, 3]);
+    // result[(0,0)] = 1*3=3, result[(1,2)] = 2*5=10
+    assert_eq!(result.data(), &[3.0, 4.0, 5.0, 6.0, 8.0, 10.0]);
 }

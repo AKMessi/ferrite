@@ -10,6 +10,8 @@ use model::{Model, ModelConfig, ssm_block, transformer_block};
 use tensor::WeightStore;
 use tokenizer::Tokenizer;
 
+use crate::cache::SSMState;
+
 fn main() {
     let path = "../model/qwen.gguf";
     println!("ferrite v0.1.0 - loading {path}\n");
@@ -99,8 +101,9 @@ fn main() {
     // standalone block checks (use their own throwaway caches —
     // these don't need to share state with the real generation cache below)
     let mut scratch_cache = KVCache::new(&model.config, 2048);
+    let mut scratch_ssm_state = SSMState::new(&model.config);
 
-    let ssm_check = ssm_block(&embedding, 0, &model);
+    let ssm_check = ssm_block(&embedding, 0, &model, &mut scratch_ssm_state);
     println!(
         "  ssm_block(layer 0) shape: {:?}, first 4: {:?}",
         ssm_check.shape(),
@@ -120,14 +123,15 @@ fn main() {
     // ============================================================
     println!("=== Layer 5: Full Forward Pass with KV Cache ===");
     let mut cache = KVCache::new(&model.config, 2048);
+    let mut ssm_state = SSMState::new(&model.config);
 
-    let logits = model.forward(&ids, 0, &mut cache);
+    let logits = model.forward(&ids, 0, &mut cache, &mut ssm_state);
     println!("  forward(pos=0) shape: {:?}", logits.shape());
     println!("  first 8 logits: {:?}", &logits.data()[..8]);
 
-    // run a second position on the SAME cache to confirm state persists
+    // run a second position on the SAME cache and SAME ssm_state to confirm state persists
     if ids.len() > 1 {
-        let logits2 = model.forward(&ids, 1, &mut cache);
+        let logits2 = model.forward(&ids, 1, &mut cache, &mut ssm_state);
         println!("  forward(pos=1) shape: {:?}", logits2.shape());
         println!("  first 8 logits: {:?}", &logits2.data()[..8]);
     }
