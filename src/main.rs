@@ -1,6 +1,7 @@
 mod cache;
 mod gguf;
 mod model;
+mod quant;
 mod tensor;
 mod tokenizer;
 
@@ -13,7 +14,7 @@ use tokenizer::Tokenizer;
 use crate::cache::SSMState;
 
 fn main() {
-    let path = "../model/qwen.gguf";
+    let path = "/run/media/akmessi/2EE4240DE423D63D/coding/ferrite/model/qwen.gguf";
     println!("ferrite v0.1.0 - loading {path}\n");
 
     // ============================================================
@@ -137,4 +138,61 @@ fn main() {
     }
 
     println!("\nAll layers checked.");
+
+    println!("=== Quant format audit ===");
+    use std::collections::HashSet;
+
+    let mut types_seen: HashSet<u32> = HashSet::new();
+    for t in &model.weights().gguf.tensors {
+        types_seen.insert(t.ggml_type);
+    }
+
+    let mut sorted_types: Vec<u32> = types_seen.into_iter().collect();
+    sorted_types.sort();
+
+    println!(
+        "  unique ggml_type values found in this model: {:?}",
+        sorted_types
+    );
+    for t in &sorted_types {
+        println!("    type {} = {}", t, ggml_type_name(*t));
+    }
+
+    println!("\n  load() success per type:");
+    for target_type in &sorted_types {
+        if let Some(tensor_info) = model
+            .weights()
+            .gguf
+            .tensors
+            .iter()
+            .find(|t| t.ggml_type == *target_type)
+        {
+            let name = &tensor_info.name;
+            match model.weights().load(name) {
+                Ok(_) => println!(
+                    "    type {} ({}) — OK  [example: {}]",
+                    target_type,
+                    ggml_type_name(*target_type),
+                    name
+                ),
+                Err(e) => println!(
+                    "    type {} ({}) — FAILS: {}  [example: {}]",
+                    target_type,
+                    ggml_type_name(*target_type),
+                    e,
+                    name
+                ),
+            }
+        }
+    }
+    println!();
+
+    let iq4_test = model.weights().load("blk.8.ffn_gate.weight").unwrap();
+    print!("IQ4_XS tensor first 8: ");
+    iq4_test
+        .data()
+        .iter()
+        .take(8)
+        .for_each(|x| print!("{:.6} ", x));
+    println!();
 }

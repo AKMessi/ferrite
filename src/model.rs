@@ -24,7 +24,7 @@ pub struct ModelConfig {
 
 pub struct Model {
     pub config: ModelConfig,
-    weights: WeightStore,
+    pub weights: WeightStore,
 }
 
 impl ModelConfig {
@@ -166,6 +166,10 @@ pub fn rope(q: &Tensor, k: &Tensor, pos: usize, config: &ModelConfig) -> (Tensor
 }
 
 impl Model {
+    pub fn weights(&self) -> &WeightStore {
+        &self.weights
+    }
+
     pub fn new(config: ModelConfig, weights: WeightStore) -> Self {
         Self { config, weights }
     }
