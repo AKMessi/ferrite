@@ -2,6 +2,7 @@ mod cache;
 mod gguf;
 mod model;
 mod quant;
+mod sampler;
 mod tensor;
 mod tokenizer;
 
@@ -195,4 +196,18 @@ fn main() {
         .take(8)
         .for_each(|x| print!("{:.6} ", x));
     println!();
+
+    println!("=== Layer 7: Sampler ===");
+    use sampler::{greedy, sample};
+
+    let greedy_token = greedy(&logits);
+    println!("  greedy(logits) -> token {}", greedy_token);
+    println!("  decoded: {:?}", tokenizer.decode(&[greedy_token]));
+
+    let sampled_token = sample(&logits, 0.8, 40, 0.9);
+    println!(
+        "  sample(temp=0.8, top_k=40, top_p=0.9) -> token {}",
+        sampled_token
+    );
+    println!("  decoded: {:?}", tokenizer.decode(&[sampled_token]));
 }
