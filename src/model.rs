@@ -20,6 +20,7 @@ pub struct ModelConfig {
     rope_dim: usize,
     pub ssm_group_count: usize,
     pub ssm_state_size: usize,
+    pub eos_token_id: u32,
 }
 
 pub struct Model {
@@ -29,6 +30,12 @@ pub struct Model {
 
 impl ModelConfig {
     pub fn from_gguf(gguf: &GGUFFile) -> Self {
+        let eos_token_id = gguf
+            .metadata
+            .get("tokenizer.ggml.eos_token_id")
+            .and_then(|v| v.as_u32())
+            .unwrap_or(248046) as u32;
+
         let n_layers = gguf
             .metadata
             .get("qwen35.block_count")
@@ -124,6 +131,7 @@ impl ModelConfig {
             rope_dim,
             ssm_group_count,
             ssm_state_size,
+            eos_token_id,
         }
     }
 }
@@ -527,7 +535,14 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
         let correction = delta.outer(&k_g).scale(beta_g);
 
         state = state.add(&correction);
-
+        state = state.clamp(-10.0, 10.0);
+        if grp == 0 && layer == 18 {
+            println!(
+                "  [ssm layer {}] state max abs: {:.4}",
+                layer,
+                state.data().iter().map(|x| x.abs()).fold(0.0, f32::max)
+            );
+        }
         ssm_state.set_group_state(layer, grp, &state, &model.config);
 
         let out_g = state.matvec(&q_g);

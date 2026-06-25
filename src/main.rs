@@ -12,7 +12,54 @@ use model::{Model, ModelConfig, ssm_block, transformer_block};
 use tensor::WeightStore;
 use tokenizer::Tokenizer;
 
-use crate::cache::SSMState;
+use crate::{cache::SSMState, sampler::sample, tensor::Tensor};
+
+fn generate(
+    model: &Model,
+    tokenizer: &Tokenizer,
+    prompt: &str,
+    max_tokens: usize,
+    temp: f32,
+    top_p: f32,
+    top_k: usize,
+) {
+    let prompt_ids = tokenizer.encode(prompt);
+    print!("{}", prompt);
+
+    let max_seq_len = 2048;
+    let mut cache = KVCache::new(&model.config, max_seq_len);
+    let mut ssm_state = SSMState::new(&model.config);
+
+    let mut all_ids = prompt_ids.clone();
+    let mut logits = Tensor::zeros(vec![1]);
+
+    for pos in 0..all_ids.len() {
+        logits = model.forward(&all_ids, pos, &mut cache, &mut ssm_state);
+    }
+
+    for _ in 0..max_tokens {
+        let next_id = sample(&logits, temp, top_k, top_p);
+
+        if next_id == model.config.eos_token_id {
+            break;
+        }
+
+        let token_str = tokenizer.decode(&[next_id]);
+        print!("{}", token_str);
+
+        use std::io::Write;
+
+        std::io::stdout().flush().unwrap();
+
+        all_ids.push(next_id);
+
+        let new_pos = all_ids.len() - 1;
+
+        logits = model.forward(&all_ids, new_pos, &mut cache, &mut ssm_state)
+    }
+
+    println!();
+}
 
 fn main() {
     let path = "/run/media/akmessi/2EE4240DE423D63D/coding/ferrite/model/qwen.gguf";
@@ -210,4 +257,8 @@ fn main() {
         sampled_token
     );
     println!("  decoded: {:?}", tokenizer.decode(&[sampled_token]));
+
+    println!("\n=== Layer 8: Generation ===");
+    let prompt = "The meaning of life is";
+    generate(&model, &tokenizer, prompt, 10, 0.8, 0.9, 40);
 }

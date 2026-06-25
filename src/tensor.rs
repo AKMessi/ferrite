@@ -100,6 +100,14 @@ impl Tensor {
         Self { data, shape }
     }
 
+    pub fn clamp(&self, min: f32, max: f32) -> Tensor {
+        let new_data: Vec<f32> = self.data.iter().map(|&x| x.clamp(min, max)).collect();
+        Self {
+            data: new_data,
+            shape: self.shape.clone(),
+        }
+    }
+
     pub fn sub(&self, other: &Tensor) -> Tensor {
         assert_eq!(self.shape, other.shape, "shape mismatch for subtraction");
         let new_data: Vec<f32> = self

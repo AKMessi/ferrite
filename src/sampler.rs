@@ -46,15 +46,24 @@ pub fn sample(logits: &Tensor, temp: f32, top_k: usize, top_p: f32) -> u32 {
         .data()
         .iter()
         .enumerate()
+        .filter(|&(_, &p)| p.is_finite() && p > 0.0)
         .map(|(i, &p)| (i as u32, p))
         .collect();
 
-    probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let probs = top_k_filter(probs, top_k);
     let probs = top_p_filter(probs, top_p);
 
+    if probs.is_empty() {
+        return greedy(logits);
+    }
+
     let total: f32 = probs.iter().map(|(_, p)| p).sum();
+
+    if !total.is_finite() || total <= 0.0 {
+        return greedy(logits);
+    }
 
     let normalized: Vec<(u32, f32)> = probs.into_iter().map(|(id, p)| (id, p / total)).collect();
 
