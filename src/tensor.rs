@@ -4,6 +4,8 @@ use crate::gguf::{GGUFError, GGUFFile, parse};
 use crate::quant;
 use half::f16;
 use memmap2::{Mmap, MmapOptions};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::ops::{Index, IndexMut};
 use std::{fs::File, path::Path};
@@ -11,6 +13,7 @@ use std::{fs::File, path::Path};
 pub struct WeightStore {
     pub mmap: Mmap,
     pub gguf: GGUFFile,
+    cache: RefCell<HashMap<String, Tensor>>,
 }
 
 #[derive(Clone)]
@@ -28,7 +31,7 @@ impl WeightStore {
         let mut cursor = Cursor::new(&mmap[..]);
         let gguf = parse(&mut cursor)?;
 
-        Ok(Self { mmap, gguf })
+        Ok(Self { mmap, gguf, cache: RefCell::new(HashMap::new()) })
     }
 
     pub fn get_bytes(&self, name: &str) -> Result<&[u8], GGUFError> {
@@ -62,6 +65,11 @@ impl WeightStore {
     }
 
     pub fn load(&self, name: &str) -> Result<Tensor, GGUFError> {
+
+        if let Some(cached) = self.cache.borrow().get(name) {
+            return Ok(cached.clone())
+        }
+        
         let info = self
             .gguf
             .get_tensor(name)
@@ -86,6 +94,8 @@ impl WeightStore {
             23 => quant::dequant_iq4_xs(bytes, shape),
             t => todo!("ggml type {} not yet implemented", t),
         };
+
+        self.cache.borrow_mut().insert(name.to_string(), tensor.clone());
 
         Ok(tensor)
     }

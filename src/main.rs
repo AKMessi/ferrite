@@ -34,7 +34,9 @@ fn generate(
     let mut logits = Tensor::zeros(vec![1]);
 
     for pos in 0..all_ids.len() {
+        // let start = std::time::Instant::now();
         logits = model.forward(&all_ids, pos, &mut cache, &mut ssm_state);
+        // println!("  [prefill timing] pos={} took {:?}", pos, start.elapsed());
     }
 
     for _ in 0..max_tokens {
@@ -54,8 +56,9 @@ fn generate(
         all_ids.push(next_id);
 
         let new_pos = all_ids.len() - 1;
-
-        logits = model.forward(&all_ids, new_pos, &mut cache, &mut ssm_state)
+        // let start = std::time::Instant::now();
+        logits = model.forward(&all_ids, new_pos, &mut cache, &mut ssm_state);
+        // println!("  [decode timing] pos={} took {:?}", new_pos, start.elapsed());
     }
 
     println!();
@@ -260,5 +263,7 @@ fn main() {
 
     println!("\n=== Layer 8: Generation ===");
     let prompt = "The meaning of life is";
-    generate(&model, &tokenizer, prompt, 10, 0.8, 0.9, 40);
+    generate(&model, &tokenizer, prompt, 10, 1.0, 0.9, 40);
+    let g = greedy(&logits);
+    println!("greedy -> {:?}", tokenizer.decode(&[g]));
 }

@@ -435,18 +435,11 @@ pub fn transformer_block(
 }
 
 pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMState) -> Tensor {
-    let qkv_w = model
-        .weights
-        .load(&format!("blk.{}.attn_qkv.weight", layer))
-        .unwrap();
-
     let gate_w = model
         .weights
         .load(&format!("blk.{}.attn_gate.weight", layer))
         .unwrap();
 
-    // TODO Layer 5: conv1d needs a sliding window over past tokens (kernel size 4).
-    // Skipped for now — single-token forward pass has no history to convolve over.
     let _conv_w = model
         .weights
         .load(&format!("blk.{}.ssm_conv1d.weight", layer))
@@ -474,6 +467,18 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
         .load(&format!("blk.{}.ssm_norm.weight", layer))
         .unwrap();
 
+    let pre_norm_w = model
+        .weights
+        .load(&format!("blk.{}.attn_norm.weight", layer)) // ← NEW load, different tensor
+        .unwrap();
+
+    let normed_x = x.rms_norm(&pre_norm_w, model.config.rms_eps);
+
+    let qkv_w = model
+        .weights
+        .load(&format!("blk.{}.attn_qkv.weight", layer))
+        .unwrap();
+
     let out_w = model
         .weights
         .load(&format!("blk.{}.ssm_out.weight", layer))
@@ -482,8 +487,8 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
     let ssm_group_count = model.config.ssm_group_count;
     let ssm_state_size = model.config.ssm_state_size;
 
-    let mixed_qkv = qkv_w.matvec(x);
-    let z = gate_w.matvec(x);
+    let mixed_qkv = qkv_w.matvec(&normed_x);
+    let z = gate_w.matvec(&normed_x);
 
     let mixed_qkv = mixed_qkv.silu();
 
@@ -500,8 +505,8 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
     let key = Tensor::from_vec(key, vec![key_dim]);
     let value = Tensor::from_vec(value, vec![value_dim]);
 
-    let alpha_out = alpha_w.matvec(x);
-    let beta_out = beta_w.matvec(x);
+    let alpha_out = alpha_w.matvec(&normed_x);
+    let beta_out = beta_w.matvec(&normed_x);
     let beta = beta_out.sigmoid();
 
     let alpha_plus_dt = alpha_out.add(&dt_bias);
@@ -511,6 +516,16 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
         a_param.shape().to_vec(),
     );
     let _g = exp_a.mul(&softplus_part).scale(-1.0);
+
+    // if layer == 0 || layer == 6 || layer == 12 || layer == 18 {
+    //     println!(
+    //         "  [layer {}] alpha_out[0..3]: {:?}",
+    //         layer,
+    //         &alpha_out.data()[..3]
+    //     );
+    //     println!("  [layer {}] beta[0..3]: {:?}", layer, &beta.data()[..3]);
+    //     println!("  [layer {}] g[0..3]: {:?}", layer, &_g.data()[..3]);
+    // }
 
     let mut output_data = vec![0.0f32; ssm_group_count * ssm_state_size];
 
@@ -536,13 +551,13 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
 
         state = state.add(&correction);
         state = state.clamp(-10.0, 10.0);
-        if grp == 0 && layer == 18 {
-            println!(
-                "  [ssm layer {}] state max abs: {:.4}",
-                layer,
-                state.data().iter().map(|x| x.abs()).fold(0.0, f32::max)
-            );
-        }
+        // if grp == 0 && layer == 18 {
+        //     println!(
+        //         "  [ssm layer {}] state max abs: {:.4}",
+        //         layer,
+        //         state.data().iter().map(|x| x.abs()).fold(0.0, f32::max)
+        //     );
+        // }
         ssm_state.set_group_state(layer, grp, &state, &model.config);
 
         let out_g = state.matvec(&q_g);
