@@ -440,7 +440,7 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
         .load(&format!("blk.{}.attn_gate.weight", layer))
         .unwrap();
 
-    let _conv_w = model
+    let conv_w = model
         .weights
         .load(&format!("blk.{}.ssm_conv1d.weight", layer))
         .unwrap();
@@ -490,7 +490,35 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
     let mixed_qkv = qkv_w.matvec(&normed_x);
     let z = gate_w.matvec(&normed_x);
 
-    let mixed_qkv = mixed_qkv.silu();
+    let history = ssm_state.get_conv_history(layer);
+
+    let mut new_history_data = vec![0.0f32; 4 * 6144];
+
+    for row in 0..3 {
+        let src_start = (row + 1) * 6144;
+        let dst_start = row * 6144;
+        new_history_data[dst_start..dst_start + 6144]
+            .copy_from_slice(&history.data()[src_start..src_start + 6144]);
+    }
+
+    new_history_data[3 * 6144..4 * 6144].copy_from_slice(mixed_qkv.data());
+
+    let history = Tensor::from_vec(new_history_data, vec![4, 6144]);
+
+    let mut conv_out_data = vec![0.0f32; 6144];
+    
+    for c in 0..6144 {
+        let mut sum = 0.0;
+        for k in 0..4 {
+            sum += conv_w[(c, k)] * history[(k, c)];
+        }
+        conv_out_data[c] = sum;
+    }
+    let conv_out = Tensor::from_vec(conv_out_data, vec![6144]);
+
+    let mixed_qkv = conv_out.silu();
+
+    ssm_state.set_conv_history(layer, &history);
 
     let key_dim = ssm_group_count * ssm_state_size;
     let value_dim = key_dim;

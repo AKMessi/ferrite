@@ -7,6 +7,7 @@ pub struct KVCache {
 
 pub struct SSMState {
     states: Vec<Tensor>,
+    conv_history: Vec<Tensor>,
 }
 
 impl SSMState {
@@ -16,14 +17,24 @@ impl SSMState {
         let state_size = config.ssm_state_size;
 
         let mut states = Vec::with_capacity(n_layers);
+        let mut conv_history = Vec::with_capacity(n_layers);
 
         for _ in 0..n_layers {
             states.push(Tensor::zeros(vec![group_count, state_size, state_size]));
+            conv_history.push(Tensor::zeros(vec![4, 6144]));
         }
 
-        Self { states }
+        Self { states, conv_history }
     }
 
+    pub fn get_conv_history(&self, layer: usize) -> Tensor {
+        self.conv_history[layer].clone()
+    }
+
+    pub fn set_conv_history(&mut self, layer: usize, new_history: &Tensor) {
+        self.conv_history[layer] = new_history.clone();
+    }
+    
     pub fn get_group_state(&self, layer: usize, grp: usize, config: &ModelConfig) -> Tensor {
         let state_size = config.ssm_state_size;
         let elements_per_group = state_size * state_size;
