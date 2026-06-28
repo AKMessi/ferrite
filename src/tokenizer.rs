@@ -9,6 +9,10 @@ pub struct Tokenizer {
 }
 
 impl Tokenizer {
+    pub fn token_to_id(&self, token: &str) -> Option<u32> {
+        self.token_to_id.get(token).copied()
+    }
+
     pub fn from_gguf(gguf: &GGUFFile) -> Self {
         let mut vocab = Vec::with_capacity(248_320);
         let mut token_to_id = HashMap::with_capacity(248_320);
@@ -45,6 +49,48 @@ impl Tokenizer {
     }
 
     pub fn encode(&self, text: &str) -> Vec<u32> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+
+        let special_tokens = ["<|im_start|>", "<|im_end|>"];
+
+        let mut tokens: Vec<u32> = Vec::new();
+        let mut remaining = text;
+
+        while !remaining.is_empty() {
+            let mut earliest_match: Option<(usize, &str)> = None;
+
+            for &special in &special_tokens {
+                if let Some(pos) = remaining.find(special) {
+                    if earliest_match.is_none() || pos < earliest_match.unwrap().0 {
+                        earliest_match = Some((pos, special));
+                    }
+                }
+            }
+
+            match earliest_match {
+                Some((pos, special)) => {
+                    if pos > 0 {
+                        let before = &remaining[..pos];
+                        tokens.extend(self.encode_bpe(before));
+                    }
+                    if let Some(&id) = self.token_to_id.get(special) {
+                        tokens.push(id);
+                    }
+                    remaining = &remaining[pos + special.len()..];
+                }
+                None => {
+                    tokens.extend(self.encode_bpe(remaining));
+                    break;
+                }
+            }
+        }
+
+        tokens
+    }
+
+    fn encode_bpe(&self, text: &str) -> Vec<u32> {
         if text.is_empty() {
             return Vec::new();
         }

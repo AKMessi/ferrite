@@ -262,8 +262,14 @@ fn main() {
     println!("  decoded: {:?}", tokenizer.decode(&[sampled_token]));
 
     println!("\n=== Layer 8: Generation ===");
-    let prompt = "The meaning of life is";
-    generate(&model, &tokenizer, prompt, 10, 1.0, 0.9, 40);
-    let g = greedy(&logits);
-    println!("greedy -> {:?}", tokenizer.decode(&[g]));
+    let raw_prompt = "The meaning of life is";
+    let formatted_prompt = format!(
+        "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+        raw_prompt
+    );
+    generate(&model, &tokenizer, &formatted_prompt, 50, 1.0, 0.9, 40);
+
+    println!("DEBUG: {:?}", tokenizer.encode("<|im_start|>"));
+    println!("DEBUG: {:?}", tokenizer.encode("<|im_end|>"));
+    println!("DEBUG: {:?}", tokenizer.encode("<|im_start|>user\nHello<|im_end|>"));
 }
