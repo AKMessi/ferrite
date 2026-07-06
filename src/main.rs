@@ -65,7 +65,7 @@ fn generate(
 }
 
 fn main() {
-    let path = "D:/AKMESSI/CODING/AI/rust/ferrite/model/qwen.gguf";
+    let path = "model/qwen.gguf";
     println!("ferrite v0.1.0 - loading {path}\n");
 
     // ============================================================
@@ -299,7 +299,7 @@ fn main() {
         "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
         raw_prompt
     );
-    generate(&model, &tokenizer, &formatted_prompt, 50, 1.0, 0.9, 40);
+    generate(&model, &tokenizer, &formatted_prompt, 10, 1.0, 0.9, 40);
 
     println!("DEBUG: {:?}", tokenizer.encode("<|im_start|>"));
     println!("DEBUG: {:?}", tokenizer.encode("<|im_end|>"));

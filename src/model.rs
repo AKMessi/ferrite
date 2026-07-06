@@ -277,8 +277,16 @@ pub fn attention(
     let v_proj_out = v_w.matvec(x);
 
     let q_data = q_proj_out.data();
-    let q_raw_vec: Vec<f32> = q_data[0..2048].to_vec();
-    let gate_raw_vec: Vec<f32> = q_data[2048..4096].to_vec();
+    let mut q_raw_vec = vec![0.0f32; n_heads * head_dim];
+    let mut gate_raw_vec = vec![0.0f32; n_heads * head_dim];
+
+    for h in 0..n_heads {
+        let head_start = h * 2 * head_dim;
+        q_raw_vec[h * head_dim..(h + 1) * head_dim]
+            .copy_from_slice(&q_data[head_start..head_start + head_dim]);
+        gate_raw_vec[h * head_dim..(h + 1) * head_dim]
+            .copy_from_slice(&q_data[head_start + head_dim..head_start + 2 * head_dim]);
+    }
 
     let q_norm_w = model
         .weights
