@@ -15,11 +15,13 @@ pub struct ModelConfig {
     ffn_dim: usize,
     vocab_size: usize,
     context_len: usize,
-    rope_theta: f32,
+    pub rope_theta: f32,
     rms_eps: f32,
-    rope_dim: usize,
+    pub rope_dim: usize,
     pub ssm_group_count: usize,
     pub ssm_state_size: usize,
+    pub full_attention_interval: usize,
+    pub key_length: usize,
     pub eos_token_id: u32,
 }
 
@@ -117,6 +119,18 @@ impl ModelConfig {
             .and_then(|v| v.as_u64())
             .unwrap_or(128) as usize;
 
+        let full_attention_interval = gguf
+            .metadata
+            .get("qwen35.full_attention_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(4) as usize;
+
+        let key_length = gguf
+            .metadata
+            .get("qwen35.attention.key_length")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(head_dim as u64) as usize;
+
         Self {
             n_layers,
             embed_dim,
@@ -132,6 +146,8 @@ impl ModelConfig {
             ssm_group_count,
             ssm_state_size,
             eos_token_id,
+            full_attention_interval,
+            key_length,
         }
     }
 }
@@ -146,9 +162,9 @@ pub fn rope(q: &Tensor, k: &Tensor, pos: usize, config: &ModelConfig) -> (Tensor
     let mut k_out = k.clone();
 
     for i in 0..(rope_dim / 2) {
-        let idx_0 = 2 * i;
-        let idx_1 = 2 * i + 1;
-        let exponent = (idx_0 as f32) / (rope_dim as f32);
+        let idx_0 = i;
+        let idx_1 = i + rope_dim / 2;
+        let exponent = (2 * i) as f32 / (rope_dim as f32);
         let angle = (pos as f32) / theta.powf(exponent);
         let cos = angle.cos();
         let sin = angle.sin();
@@ -206,7 +222,7 @@ impl Model {
 
         // 2. pass through all 24 blocks, routing by block index
         for layer in 0..self.config.n_layers {
-            let is_attention = (layer + 1) % 4 == 0;
+            let is_attention = (layer + 1) % self.config.full_attention_interval == 0;
             x = if is_attention {
                 transformer_block(&x, layer, pos, self, cache)
             } else {
@@ -506,7 +522,7 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
     let history = Tensor::from_vec(new_history_data, vec![4, 6144]);
 
     let mut conv_out_data = vec![0.0f32; 6144];
-    
+
     for c in 0..6144 {
         let mut sum = 0.0;
         for k in 0..4 {
@@ -633,6 +649,9 @@ mod tests {
             rope_dim: 64,
             ssm_group_count: 16,
             ssm_state_size: 128,
+            full_attention_interval: 4,
+            key_length: 256,
+            eos_token_id: 248046,
         };
         assert_eq!(cfg.n_heads / cfg.n_kv_heads, 4); // GQA group size
         assert_eq!(cfg.ssm_group_count * cfg.ssm_state_size, 2048); // matches attn_qkv split

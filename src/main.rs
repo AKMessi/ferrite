@@ -65,7 +65,7 @@ fn generate(
 }
 
 fn main() {
-    let path = "/run/media/akmessi/2EE4240DE423D63D/coding/ferrite/model/qwen.gguf";
+    let path = "D:/AKMESSI/CODING/AI/rust/ferrite/model/qwen.gguf";
     println!("ferrite v0.1.0 - loading {path}\n");
 
     // ============================================================
@@ -83,6 +83,27 @@ fn main() {
     println!("  version:        {}", gguf.version);
     println!("  tensor count:   {}", gguf.tensors.len());
     println!("  metadata keys:  {}", gguf.metadata.len());
+    let mut key_list: Vec<&String> = gguf.metadata.keys().collect();
+    key_list.sort();
+    for k in &key_list {
+        println!("    - {}", k);
+    }
+    if let Some(arch) = gguf.metadata.get("general.architecture") {
+        println!("  general.architecture = {:?}", arch);
+    }
+    for k in [
+        "qwen35.rope.dimension_sections",
+        "qwen35.ssm.conv_kernel",
+        "qwen35.ssm.inner_size",
+        "qwen35.ssm.time_step_rank",
+        "qwen35.attention.key_length",
+        "qwen35.attention.value_length",
+    ] {
+        match gguf.metadata.get(k) {
+            Some(v) => println!("  {} = {:?}", k, v),
+            None => println!("  {} = <missing>", k),
+        }
+    }
     println!("  alignment:      {} bytes", gguf.alignment);
     println!("  tensor data at: offset {}", gguf.tensor_data_start);
 
@@ -140,6 +161,17 @@ fn main() {
     // ============================================================
     println!("=== Layer 4: Model + Forward Pass ===");
     let config = ModelConfig::from_gguf(&store.gguf);
+    println!(
+        "  resolved config: n_layers={} full_attention_interval={} head_dim={} key_length={} rope_dim={} rope_theta={} ssm_group_count={} ssm_state_size={}",
+        config.n_layers,
+        config.full_attention_interval,
+        config.head_dim,
+        config.key_length,
+        config.rope_dim,
+        config.rope_theta,
+        config.ssm_group_count,
+        config.ssm_state_size,
+    );
     let model = Model::new(config, store);
 
     let test_token = *ids.get(0).unwrap_or(&9419u32);
@@ -271,5 +303,8 @@ fn main() {
 
     println!("DEBUG: {:?}", tokenizer.encode("<|im_start|>"));
     println!("DEBUG: {:?}", tokenizer.encode("<|im_end|>"));
-    println!("DEBUG: {:?}", tokenizer.encode("<|im_start|>user\nHello<|im_end|>"));
+    println!(
+        "DEBUG: {:?}",
+        tokenizer.encode("<|im_start|>user\nHello<|im_end|>")
+    );
 }

@@ -47,9 +47,14 @@ impl WeightStore {
             0 => n * 4,                    // F32
             1 => n * 2,                    // F16
             8 => ((n + 31) / 32) * 34,     // Q8_0
+            10 => ((n + 255) / 256) * 84,  // Q2_K
             12 => ((n + 255) / 256) * 144, // Q4_K
             13 => ((n + 255) / 256) * 176, // Q5_K
             14 => ((n + 255) / 256) * 210, // Q6_K
+            16 => ((n + 255) / 256) * 66,  // IQ2_XXS
+            18 => ((n + 255) / 256) * 98,  // IQ3_XXS
+            21 => ((n + 255) / 256) * 110, // IQ3_S
+            22 => ((n + 255) / 256) * 82,  // IQ2_S
             23 => ((n + 255) / 256) * 136, // IQ4_XS
             24 => n,                       // I8
             25 => n * 2,                   // I16
@@ -85,12 +90,15 @@ impl WeightStore {
             1 => Tensor::load_f16(bytes, shape),
 
             8 => quant::dequant_q8_0(bytes, shape),
-
+            10 => quant::dequant_q2_k(bytes, shape),
             12 => quant::dequant_q4_k(bytes, shape),
 
             13 => quant::dequant_q5_k(bytes, shape),
             14 => quant::dequant_q6_k(bytes, shape),
-
+            16 => quant::dequant_iq2_xxs(bytes, shape),
+            18 => quant::dequant_iq3_xxs(bytes, shape),
+            21 => quant::dequant_iq3_s(bytes, shape),
+            22 => quant::dequant_iq2_s(bytes, shape),
             23 => quant::dequant_iq4_xs(bytes, shape),
             t => todo!("ggml type {} not yet implemented", t),
         };
