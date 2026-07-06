@@ -31,7 +31,11 @@ impl WeightStore {
         let mut cursor = Cursor::new(&mmap[..]);
         let gguf = parse(&mut cursor)?;
 
-        Ok(Self { mmap, gguf, cache: RefCell::new(HashMap::new()) })
+        Ok(Self {
+            mmap,
+            gguf,
+            cache: RefCell::new(HashMap::new()),
+        })
     }
 
     pub fn get_bytes(&self, name: &str) -> Result<&[u8], GGUFError> {
@@ -70,11 +74,10 @@ impl WeightStore {
     }
 
     pub fn load(&self, name: &str) -> Result<Tensor, GGUFError> {
-
         if let Some(cached) = self.cache.borrow().get(name) {
-            return Ok(cached.clone())
+            return Ok(cached.clone());
         }
-        
+
         let info = self
             .gguf
             .get_tensor(name)
@@ -100,10 +103,13 @@ impl WeightStore {
             21 => quant::dequant_iq3_s(bytes, shape),
             22 => quant::dequant_iq2_s(bytes, shape),
             23 => quant::dequant_iq4_xs(bytes, shape),
+            30 => Tensor::load_bf16(bytes, shape),
             t => todo!("ggml type {} not yet implemented", t),
         };
 
-        self.cache.borrow_mut().insert(name.to_string(), tensor.clone());
+        self.cache
+            .borrow_mut()
+            .insert(name.to_string(), tensor.clone());
 
         Ok(tensor)
     }
@@ -403,6 +409,24 @@ impl Tensor {
             .map(|chunk| {
                 let array = [chunk[0], chunk[1]];
                 f16::from_le_bytes(array).to_f32()
+            })
+            .collect();
+
+        Self::from_vec(data, shape)
+    }
+
+    pub fn load_bf16(bytes: &[u8], shape: Vec<usize>) -> Tensor {
+        assert_eq!(
+            bytes.len() % 2,
+            0,
+            "bf16 data length must be a multiple of 2 bytes"
+        );
+
+        let data: Vec<f32> = bytes
+            .chunks_exact(2)
+            .map(|chunk| {
+                let bits = ((chunk[1] as u32) << 24) | ((chunk[0] as u32) << 16);
+                f32::from_bits(bits)
             })
             .collect();
 

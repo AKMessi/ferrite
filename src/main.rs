@@ -65,7 +65,7 @@ fn generate(
 }
 
 fn main() {
-    let path = "model/qwen.gguf";
+    let path = "model/qwenfp16.gguf";
     println!("ferrite v0.1.0 - loading {path}\n");
 
     // ============================================================
@@ -192,6 +192,11 @@ fn main() {
         "  ssm_block(layer 0) shape: {:?}, first 4: {:?}",
         ssm_check.shape(),
         &ssm_check.data()[..4]
+    );
+    let after_layer0 = embedding.add(&ssm_check); // residual, matches forward()'s x.add(&ssm_out)
+    println!(
+        "ferrite after layer 0, first 8: {:?}",
+        &after_layer0.data()[..8]
     );
 
     let attn_check = transformer_block(&embedding, 3, 0, &model, &mut scratch_cache);
