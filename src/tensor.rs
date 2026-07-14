@@ -338,6 +338,30 @@ impl Tensor {
             .data
             .iter()
             .zip(weight.data.iter())
+            .map(|(&x, &w)| (x / rms) * (1.0 + w))
+            .collect();
+
+        Self {
+            data: new_data,
+            shape: self.shape.clone(),
+        }
+    }
+
+    pub fn rms_norm_plain(&self, weight: &Tensor, eps: f32) -> Tensor {
+        assert_eq!(
+            self.shape, weight.shape,
+            "Weight shape {:?} must match input shape {:?}",
+            weight.shape, self.shape
+        );
+
+        let sum_sq: f32 = self.data.iter().map(|&x| x * x).sum();
+        let mean_sq = sum_sq / (self.numel() as f32);
+        let rms = (mean_sq + eps).sqrt();
+
+        let new_data = self
+            .data
+            .iter()
+            .zip(weight.data.iter())
             .map(|(&x, &w)| (x / rms) * w)
             .collect();
 

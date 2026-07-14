@@ -65,7 +65,7 @@ fn generate(
 }
 
 fn main() {
-    let path = "model/qwenfp16.gguf";
+    let path = "model/qwenbf16.gguf";
     println!("ferrite v0.1.0 - loading {path}\n");
 
     // ============================================================
@@ -98,6 +98,10 @@ fn main() {
         "qwen35.ssm.time_step_rank",
         "qwen35.attention.key_length",
         "qwen35.attention.value_length",
+        "general.base_model.0.name",
+        "general.base_model.0.organization",
+        "general.base_model.0.repo_url",
+        "general.basename",
     ] {
         match gguf.metadata.get(k) {
             Some(v) => println!("  {} = {:?}", k, v),
@@ -299,12 +303,12 @@ fn main() {
     println!("  decoded: {:?}", tokenizer.decode(&[sampled_token]));
 
     println!("\n=== Layer 8: Generation ===");
-    let raw_prompt = "The meaning of life is";
-    let formatted_prompt = format!(
-        "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-        raw_prompt
-    );
-    generate(&model, &tokenizer, &formatted_prompt, 10, 1.0, 0.9, 40);
+    let raw_prompt = "The capital of France is";
+    // let formatted_prompt = format!(
+    //     "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+    //     raw_prompt
+    // );
+    generate(&model, &tokenizer, &raw_prompt, 10, 1.0, 0.9, 40);
 
     println!("DEBUG: {:?}", tokenizer.encode("<|im_start|>"));
     println!("DEBUG: {:?}", tokenizer.encode("<|im_end|>"));

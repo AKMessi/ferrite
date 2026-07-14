@@ -135,7 +135,8 @@ pub fn dequant_q5_k(bytes: &[u8], shape: Vec<usize>) -> Tensor {
         0,
         "Q5_K data size must be a multiple of 176 bytes"
     );
-    let mut data = Vec::with_capacity(shape.iter().product());
+    let numel: usize = shape.iter().product();
+    let mut data = Vec::with_capacity(numel);
 
     for block in bytes.chunks_exact(176) {
         let d = f16::from_le_bytes([block[0], block[1]]).to_f32();
@@ -143,51 +144,46 @@ pub fn dequant_q5_k(bytes: &[u8], shape: Vec<usize>) -> Tensor {
 
         let scales = &block[4..16];
         let qh = &block[16..48];
-        let qs = &block[48..176];
+        let ql_full = &block[48..176];
 
-        let mut sc = [0u8; 8];
-        let mut mn = [0u8; 8];
-        sc[0] = scales[0] & 0x3F;
-        sc[1] = scales[1] & 0x3F;
-        sc[2] = scales[2] & 0x3F;
-        sc[3] = scales[3] & 0x3F;
-        sc[4] = (scales[0] >> 6) | ((scales[4] & 0x0F) << 2);
-        sc[5] = (scales[1] >> 6) | ((scales[5] & 0x0F) << 2);
-        sc[6] = (scales[2] >> 6) | ((scales[6] & 0x0F) << 2);
-        sc[7] = (scales[3] >> 6) | ((scales[7] & 0x0F) << 2);
-        mn[0] = scales[4] & 0x3F;
-        mn[1] = scales[5] & 0x3F;
-        mn[2] = scales[6] & 0x3F;
-        mn[3] = scales[7] & 0x3F;
-        mn[4] = (scales[4] >> 6) | ((scales[8] & 0x0F) << 2);
-        mn[5] = (scales[5] >> 6) | ((scales[9] & 0x0F) << 2);
-        mn[6] = (scales[6] >> 6) | ((scales[10] & 0x0F) << 2);
-        mn[7] = (scales[7] >> 6) | ((scales[11] & 0x0F) << 2);
-
-        for j in 0..8usize {
-            let d_sc = d * sc[j] as f32;
-            let d_mn = dmin * mn[j] as f32;
-            let qs_off = j * 16;
-            let qh_off = j * 4;
-
-            for l in 0..16usize {
-                let lo0 = qs[qs_off + l] & 0x0F;
-                let lo1 = qs[qs_off + l] >> 4;
-
-                let bit0 = (l * 2) % 8;
-                let bit1 = (l * 2 + 1) % 8;
-                let qh_byte0 = qh[qh_off + (l * 2) / 8];
-                let qh_byte1 = qh[qh_off + (l * 2 + 1) / 8];
-
-                let hi0 = (qh_byte0 >> bit0) & 1;
-                let hi1 = (qh_byte1 >> bit1) & 1;
-
-                let q0 = (lo0 | (hi0 << 4)) as f32;
-                let q1 = (lo1 | (hi1 << 4)) as f32;
-
-                data.push(d_sc * q0 - d_mn);
-                data.push(d_sc * q1 - d_mn);
+        let get_scale_min = |j: usize| -> (u8, u8) {
+            if j < 4 {
+                (scales[j] & 63, scales[j + 4] & 63)
+            } else {
+                let sc = (scales[j + 4] & 0x0F) | ((scales[j - 4] >> 6) << 4);
+                let m = (scales[j + 4] >> 4) | ((scales[j] >> 6) << 4);
+                (sc, m)
             }
+        };
+
+        let mut is = 0usize;
+        let mut u1: u8 = 1;
+        let mut u2: u8 = 2;
+
+        for oi in 0..4 {
+            let ql = &ql_full[oi * 32..oi * 32 + 32];
+
+            let (sc1, m1) = get_scale_min(is);
+            let d1 = d * sc1 as f32;
+            let m1v = dmin * m1 as f32;
+            let (sc2, m2) = get_scale_min(is + 1);
+            let d2 = d * sc2 as f32;
+            let m2v = dmin * m2 as f32;
+
+            for l in 0..32 {
+                let hi = if qh[l] & u1 != 0 { 16.0 } else { 0.0 };
+                let q = (ql[l] & 0x0F) as f32 + hi;
+                data.push(d1 * q - m1v);
+            }
+            for l in 0..32 {
+                let hi = if qh[l] & u2 != 0 { 16.0 } else { 0.0 };
+                let q = (ql[l] >> 4) as f32 + hi;
+                data.push(d2 * q - m2v);
+            }
+
+            is += 2;
+            u1 = u1.wrapping_shl(2);
+            u2 = u2.wrapping_shl(2);
         }
     }
 
@@ -291,7 +287,7 @@ pub(crate) const IQ3XXS_GRID: [u32; 256] = [
 ];
 
 pub fn dequant_iq3_xxs(bytes: &[u8], shape: Vec<usize>) -> Tensor {
-    const BLOCK_SIZE: usize = 98; // 2 (d) + 64 (qs) + 32 (scales_and_signs)
+    const BLOCK_SIZE: usize = 98;
     assert_eq!(
         bytes.len() % BLOCK_SIZE,
         0,
@@ -601,12 +597,8 @@ pub(crate) const IQ2XXS_GRID: [u64; 256] = [
     0x2b2b2b1908081908,
 ];
 
-/// IQ2_XXS ("almost true" 2-bit i-quant, 2.0625 bits/weight).
-/// Block layout (66 bytes, 256 values per block): d: f16 (2 bytes), qs: 32x u16 (64 bytes).
-/// Reuses KSIGNS_IQ2XS / KMASK_IQ2XS defined above. Ported directly from ggml's
-/// `dequantize_row_iq2_xxs` / `iq2xxs_grid` table (llama.cpp, ggml-common.h).
 pub fn dequant_iq2_xxs(bytes: &[u8], shape: Vec<usize>) -> Tensor {
-    const BLOCK_SIZE: usize = 66; // 2 (d) + 64 (qs, 32 x u16)
+    const BLOCK_SIZE: usize = 66;
     assert_eq!(
         bytes.len() % BLOCK_SIZE,
         0,
@@ -619,13 +611,13 @@ pub fn dequant_iq2_xxs(bytes: &[u8], shape: Vec<usize>) -> Tensor {
 
     for block in bytes.chunks_exact(BLOCK_SIZE) {
         let d = f16::from_le_bytes([block[0], block[1]]).to_f32();
-        let qs = &block[2..66]; // 32 x u16, little-endian
+        let qs = &block[2..66];
 
         for ib32 in 0..8 {
-            let base = 8 * ib32; // 8 bytes per ib32 (2 x u32), within the 64-byte qs region
+            let base = 8 * ib32;
             let lo = u32::from_le_bytes([qs[base], qs[base + 1], qs[base + 2], qs[base + 3]]);
             let hi = u32::from_le_bytes([qs[base + 4], qs[base + 5], qs[base + 6], qs[base + 7]]);
-            let aux8 = lo.to_le_bytes(); // 4 grid indices for this ib32
+            let aux8 = lo.to_le_bytes();
             let db = d * (0.5 + ((hi >> 28) as f32)) * 0.25;
 
             for l in 0..4 {

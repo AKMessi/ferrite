@@ -219,6 +219,13 @@ impl Model {
     ) -> Tensor {
         // 1. embed the current token (you have self.embed() already)
         let mut x = self.embed(tokens[pos]);
+        if pos == 0 {
+            println!(
+                "  [diff] embedding_out (token {}) first 4: {:?}",
+                tokens[pos],
+                &x.data()[..4]
+            );
+        }
 
         // 2. pass through all 24 blocks, routing by block index
         for layer in 0..self.config.n_layers {
@@ -229,6 +236,13 @@ impl Model {
                 let ssm_out = ssm_block(&x, layer, self, ssm_state);
                 x.add(&ssm_out)
             };
+            if pos == 0 {
+                println!(
+                    "  [diff] after_layer_{} first 4: {:?}",
+                    layer,
+                    &x.data()[..4]
+                );
+            }
         }
 
         // 3. final RMSNorm
@@ -585,9 +599,20 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
         let start = grp * ssm_state_size;
         let end = start + ssm_state_size;
 
-        let q_g = Tensor::from_vec(query.data()[start..end].to_vec(), vec![ssm_state_size]);
-        let k_g = Tensor::from_vec(key.data()[start..end].to_vec(), vec![ssm_state_size]);
+        let q_g_raw = Tensor::from_vec(query.data()[start..end].to_vec(), vec![ssm_state_size]);
+        let k_g_raw = Tensor::from_vec(key.data()[start..end].to_vec(), vec![ssm_state_size]);
         let v_g = Tensor::from_vec(value.data()[start..end].to_vec(), vec![ssm_state_size]);
+        let l2_normalize = |t: &Tensor, eps: f32| -> Tensor {
+            let sumsq: f32 = t.data().iter().map(|x| x * x).sum();
+            let inv_norm = 1.0 / (sumsq + eps).sqrt();
+            Tensor::from_vec(
+                t.data().iter().map(|x| x * inv_norm).collect(),
+                t.shape().to_vec(),
+            )
+        };
+        let k_g = l2_normalize(&k_g_raw, 1e-6);
+        let q_scale = 1.0 / (ssm_state_size as f32).sqrt();
+        let q_g = l2_normalize(&q_g_raw, 1e-6).scale(q_scale);
         let beta_g = beta.data()[grp];
         let g_g = _g.data()[grp];
 
@@ -618,6 +643,8 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
     }
 
     let output = Tensor::from_vec(output_data, vec![ssm_group_count * ssm_state_size]);
+    // RMSNormGated (Mamba2/GatedDeltaNet convention): gate FIRST, then normalize
+    // the gated result. norm(x)*gate != norm(x*gate).
 
     let mut normed_data = vec![0.0f32; ssm_group_count * ssm_state_size];
     for grp in 0..ssm_group_count {
@@ -626,7 +653,7 @@ pub fn ssm_block(x: &Tensor, layer: usize, model: &Model, ssm_state: &mut SSMSta
 
         let group_slice =
             Tensor::from_vec(output.data()[start..end].to_vec(), vec![ssm_state_size]);
-        let group_normed = group_slice.rms_norm(&norm_w, model.config.rms_eps);
+        let group_normed = group_slice.rms_norm_plain(&norm_w, model.config.rms_eps);
 
         normed_data[start..end].copy_from_slice(group_normed.data());
     }
