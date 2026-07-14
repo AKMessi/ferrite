@@ -17,15 +17,15 @@ This was a personal learning project, not a production inference engine. It prio
 
 ## Architecture
 
-src/
-gguf.rs      — GGUF binary format parser
-tensor.rs    — Tensor struct, matvec/matmul/rms_norm/softmax/etc., WeightStore
-quant.rs     — Dequantization kernels for all 8 supported formats
-tokenizer.rs — BPE tokenizer with special-token support
-model.rs     — ModelConfig, attention(), ssm_block(), transformer_block(), forward()
-cache.rs     — KVCache (attention) and SSMState (recurrent state) structs
-sampler.rs   — greedy / temperature / top-k / top-p sampling
-main.rs      — layer-by-layer checkpoints + generation entrypoint
+- src/
+- gguf.rs      — GGUF binary format parser
+- tensor.rs    — Tensor struct, matvec/matmul/rms_norm/softmax/etc., WeightStore
+- quant.rs     — Dequantization kernels for all 8 supported formats
+- tokenizer.rs — BPE tokenizer with special-token support
+- model.rs     — ModelConfig, attention(), ssm_block(), transformer_block(), forward()
+- cache.rs     — KVCache (attention) and SSMState (recurrent state) structs
+- sampler.rs   — greedy / temperature / top-k / top-p sampling
+- main.rs      — layer-by-layer checkpoints + generation entrypoint
 
 ## Running it
 
