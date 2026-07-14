@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 byteorder = "1.5"
-memmap2 = "0.9.10"
-thiserror = "1.0"
+memmap2 = "0.9.11"
+thiserror = "2.0.18"
 half = "2.7.1"
-tempfile = "3.8"
+tempfile = "3.27.0"
 rand = "0.9"
