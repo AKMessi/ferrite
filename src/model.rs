@@ -1,4 +1,5 @@
 #[allow(dead_code)]
+#[allow(unused)]
 use crate::cache::KVCache;
 use crate::{
     cache::SSMState,
